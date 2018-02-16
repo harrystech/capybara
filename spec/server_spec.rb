@@ -72,6 +72,24 @@ RSpec.describe Capybara::Server do
     expect(@res2.body).to include('Hello Second Server')
   end
 
+  describe "#wait_for_pending_requests" do
+    it "should raise a PendingRequestsError when there are pending requests after 60 seconds" do
+      app = proc do |env|
+        request = Rack::Request.new(env)
+        sleep request.params['wait_time'].to_f
+        [200, {}, ["Hello Server!"]]
+      end
+
+      server = Capybara::Server.new(app).boot
+
+      start_request(server, 62)
+
+      expect {
+        server.wait_for_pending_requests
+      }.to raise_error(Capybara::PendingRequestsError, /requests did not finish/i)
+    end
+  end
+
   context "When Capybara.reuse_server is true" do
     before do
       @old_reuse_server = Capybara.reuse_server

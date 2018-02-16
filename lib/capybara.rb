@@ -21,6 +21,15 @@ module Capybara
   class WindowError < CapybaraError; end
   class ReadOnlyElementError < CapybaraError; end
 
+  class PendingRequestsError < RuntimeError
+    def initialize(message, pending_requests)
+      super(message)
+
+      @pending_requests = pending_requests
+    end
+
+    attr_reader :pending_requests
+  end
 
   class << self
     extend Forwardable

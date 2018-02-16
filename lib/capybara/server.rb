@@ -6,20 +6,29 @@ require 'rack'
 module Capybara
   class Server
     class Middleware
-      class Counter
-        attr_reader :value
-
+      class RequestTracker
         def initialize
-          @value = 0
+          @requests = {}
+          @count = 0
           @mutex = Mutex.new
         end
 
-        def increment
-          @mutex.synchronize { @value += 1 }
+        def pending
+          @requests.values
         end
 
-        def decrement
-          @mutex.synchronize { @value -= 1 }
+        def request_started(env)
+          @mutex.synchronize do
+            @count += 1
+            @requests[@count] = env
+            @count
+          end
+        end
+
+        def request_finished(id)
+          @mutex.synchronize do
+            @requests.delete(id)
+          end
         end
       end
 
@@ -27,26 +36,30 @@ module Capybara
 
       def initialize(app, server_errors)
         @app = app
-        @counter = Counter.new
+        @request_tracker = RequestTracker.new
         @server_errors = server_errors
       end
 
+      def pending_requests
+        @request_tracker.pending
+      end
+
       def pending_requests?
-        @counter.value > 0
+        pending_requests.any?
       end
 
       def call(env)
         if env["PATH_INFO"] == "/__identify__"
           [200, {}, [@app.object_id.to_s]]
         else
-          @counter.increment
+          id = @request_tracker.request_started(env)
           begin
             @app.call(env)
           rescue *@server_errors => e
             @error = e unless @error
             raise e
           ensure
-            @counter.decrement
+            @request_tracker.request_finished(id)
           end
         end
       end
@@ -91,7 +104,7 @@ module Capybara
     def wait_for_pending_requests
       Timeout.timeout(60) { sleep(0.01) while pending_requests? }
     rescue Timeout::Error
-      raise "Requests did not finish in 60 seconds"
+      raise Capybara::PendingRequestsError.new("Requests did not finish in 60 seconds", pending_requests)
     end
 
     def boot
@@ -122,6 +135,10 @@ module Capybara
 
     def pending_requests?
       middleware.pending_requests?
+    end
+
+    def pending_requests
+      middleware.pending_requests
     end
 
     def find_available_port(host)
